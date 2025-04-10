@@ -214,3 +214,38 @@ class Processor:
                 self.registers[self.mem_wb['rd']]=self.mem_wb['mem_data']
             else: 
                 self.registers[self.mem_wb['rd']]=self.mem_wb['alu_result']
+
+
+    def print_pipeline_state(self):
+        """Print the current state of the pipeline"""
+        print(f"Cycle {self.cycles}:")
+        print(f"  IF: {self.if_id['ins'] or '---'}")
+        print(f"  ID: {self.id_ex['ins'] or '---'}")
+        print(f"  EX: {self.ex_mem['ins'] or '---'}")
+        print(f"  MEM: {self.mem_wb['ins'] or '---'}")
+        print(f"  WB: {self.mem_wb['ins'] if self.mem_wb['ins'] and 'halt' not in self.mem_wb['ins'] else '---'}")
+        print("---")
+
+    def print_statistics(self):
+        """Print simulation statistics"""
+        print("\nSimulation Statistics:")
+        print("=====================")
+        print(f"Total Clock Cycles: {self.cycles}")
+        print(f"Total Instructions Executed: {self.tot_ins}")
+        print(f"Total Stalls: {self.stall_count}")
+        print(f"  Stalls due to Loads: {self.load_stalls}")
+        print(f"  Stalls due to Memory Latency: {self.mem_delay_cycles}")
+        print("Branch Delay Slot Effectiveness:")
+        print(f"  Useful Delay Slots: {self.delay_slot_used}")
+        print(f"  Wasted Delay Slots: {self.delay_slot_wasted}")
+        if (self.delay_slot_used + self.delay_slot_wasted) > 0:
+            effectiveness = (self.delay_slot_used / 
+                        (self.delay_slot_used + self.delay_slot_wasted)) * 100
+            print(f"  Effectiveness: {effectiveness:.2f}%")
+        print("\nFinal Register Values:")
+        for i in range(32):
+            if self.regs[i] != 0:
+                print(f"  ${i}: {self.regs[i]}")
+        print("\nFinal Data Memory Contents:")
+        for addr in sorted(self.data_mem.keys()):
+            print(f"  MEM[{addr}]: {self.data_mem[addr]}")
