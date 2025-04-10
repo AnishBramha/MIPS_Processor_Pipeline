@@ -205,3 +205,12 @@ class Processor:
             self.mem_wb['mem'] = self.data_mem.get(addr, 0)
             self.current_stage_cycles = self.mem_latency - 1
 
+
+    def wb_stage(self):
+        if not self.mem_wb['ins']:
+            return
+        if self.mem_wb['control']['regwrite']:
+            if self.mem_wb['control']['memread']:
+                self.registers[self.mem_wb['rd']]=self.mem_wb['mem_data']
+            else: 
+                self.registers[self.mem_wb['rd']]=self.mem_wb['alu_result']
