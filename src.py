@@ -1,6 +1,7 @@
 import random
 
 class Processor:
+
     def __init__(self):
         self.if_id = {'ins': None, 'pc': None}
         self.id_ex = {'ins': None, 'pc': None, 'rs': None, 'rt': None, 'rd': None, 'imm': None, 'control': None}
@@ -35,7 +36,7 @@ class Processor:
             self.tot_ins += 1
         else:
             self.if_id['ins'] = None
-            self.if_id['pc'] = self.pc
+            self.if_id['pc'] = self.pc    
         
     def id_stage(self):
         if not self.if_id['ins']:
@@ -102,7 +103,22 @@ class Processor:
         elif op == 'beq':
             self.id_ex['rs'] = int(parts[1][1:])
             self.id_ex['rt'] = int(parts[2][1:])
-            self.id_ex['imm'] = int(parts[3])
+            target = parts[3]
+            
+            # Handle both immediate offsets and labels
+            if target.isdigit() or (target[0] == '-' and target[1:].isdigit()):
+                self.id_ex['imm'] = int(target)
+            else:
+                # Search for the label in instruction memory
+                for addr, instruction in self.ins_mem.items():
+                    if instruction.startswith(target + ':'):
+                        # Calculate offset from current PC (pc+4 is already in pipeline)
+                        offset = (addr - (self.id_ex['pc'] + 4)) >> 2
+                        self.id_ex['imm'] = offset
+                        break
+                else:
+                    raise ValueError(f"Unknown branch target: {target}")
+            
             self.id_ex['control'].update({
                 'branch': 1,
                 'aluop': 'sub'  
@@ -161,8 +177,21 @@ class Processor:
         self.ex_mem['rt_data'] = rt_val
         self.ex_mem['rd'] = self.id_ex['rd'] if self.id_ex['rd'] is not None else self.id_ex['rt']
 
-        if self.id_ex['control']['branch']:
-            if self.ex_mem['alu_res'] == 0: 
+        
+        if self.id_ex['control']['jump']:
+            jump_target = (self.id_ex['pc'] & 0xF0000000) | (self.id_ex['imm'] << 2)
+            self.pc = jump_target
+            self.branch_taken = True
+            pc_next = self.id_ex['pc'] + 4
+            if pc_next in self.ins_mem and not self.ins_mem[pc_next].startswith('nop'):
+                self.delay_slot_used += 1
+            else:
+                self.delay_slot_wasted += 1
+                
+
+        elif self.id_ex['control']['branch']:
+            
+            if rs_val == rt_val:  
                 self.pc = self.id_ex['pc'] + 4 + (self.id_ex['imm'] << 2)
                 self.branch_taken = True
                 pc_next = self.id_ex['pc'] + 4
@@ -172,7 +201,7 @@ class Processor:
                     self.delay_slot_wasted += 1
 
         if self.id_ex['control']['memread'] and ((self.id_ex['rs'] is not None and self.id_ex['rs'] == self.ex_mem['rd']) or 
-           (self.id_ex['rt'] is not None and self.id_ex['rt'] == self.ex_mem['rd'])):
+        (self.id_ex['rt'] is not None and self.id_ex['rt'] == self.ex_mem['rd'])):
             self.stall = True
             self.stall_count += 1
             self.load_stalls += 1
@@ -258,7 +287,7 @@ class Processor:
             'addi $1, $1, 4',     
             'addi $3, $3, 4',     
             'subi $4, $4, 1',     
-            'bne $4, $0, loop',   
+            'beq $4, $0, loop',   
             'addi $8, $0, 100',  
             'lw $9, 0($2)',      
             'sw $9, 4($2)',      
