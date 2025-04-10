@@ -173,3 +173,13 @@ class Processor:
             self.stall = True
             self.stall_count += 1
             self.load_stalls += 1
+
+
+    def wb_stage(self):
+        if not self.mem_wb['ins']:
+            return
+        if self.mem_wb['control']['regwrite']:
+            if self.mem_wb['control']['memread']:
+                self.registers[self.mem_wb['rd']]=self.mem_wb['mem_data']
+            else: 
+                self.registers[self.mem_wb['rd']]=self.mem_wb['alu_result']
