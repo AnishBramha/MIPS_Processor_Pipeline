@@ -293,7 +293,7 @@ class Processor:
             
         self.print_statistics()
 
-# Run the simulation
+
 core = Processor()
 core.load_sample_program()
 core.run()
