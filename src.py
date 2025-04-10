@@ -173,3 +173,35 @@ class Processor:
             self.stall = True
             self.stall_count += 1
             self.load_stalls += 1
+
+        
+    def mem_stage(self) -> None:
+
+        if not self.ex_mem['ins']:
+
+            self.mem_wb['ins'] = None
+            return
+        
+        if self.current_stage_cycles > 0:
+
+            self.current_stage_cycles -= 1
+            self.mem_delay_cycles += 1
+            self.stall = True
+            self.stall_count += 1
+
+            return
+        
+        self.stall = False
+
+        ins = self.ex_mem['ins']
+        self.mem_wb['ins'] = ins
+        self.mem_wb['alu_res'] = self.ex_mem['alu_res']
+        self.mem_wb['control'] = self.ex_mem['control']
+        self.mem_wb['rd'] = self.ex_mem['rd']
+
+        if self.ex_mem['control']['memread']:
+
+            addr = self.ex_mem['alu_res']
+            self.mem_wb['mem'] = self.data_mem.get(addr, 0)
+            self.current_stage_cycles = self.mem_latency - 1
+
