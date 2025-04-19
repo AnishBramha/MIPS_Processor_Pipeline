@@ -1,328 +1,257 @@
 import random
 
-class Processor:
-
-    def __init__(self):
-        self.if_id = {'ins': None, 'pc': None}
-        self.id_ex = {'ins': None, 'pc': None, 'rs': None, 'rt': None, 'rd': None, 'imm': None, 'control': None}
-        self.ex_mem = {'ins': None, 'pc': None, 'alu_res': None, 'rt_data': None, 'rd': None, 'control': None}
-        self.mem_wb = {'ins': None, 'alu_res': None, 'mem_data': None, 'rd': None, 'control': None}
-        self.regs = [0 for _ in range(0, 32)]
-        self.data_mem = {}
-        self.ins_mem = {}
-
-        self.pc = 0
-        self.stall = False
-        self.branch_taken = False
-        self.current_stage_cycles = 0
-        self.mem_latency = 0
-
-        self.cycles = 0
-        self.tot_ins = 0
-        self.stall_count = 0
-        self.load_stalls = 0
-        self.delay_slot_used = 0
-        self.delay_slot_wasted = 0
-        self.mem_delay_cycles = 0
-
-    def if_stage(self):
-        if self.stall:
-            return
-        if self.pc in self.ins_mem:
-            ins = self.ins_mem[self.pc]
-            self.if_id['ins'] = ins
-            self.if_id['pc'] = self.pc
-            self.pc += 4
-            self.tot_ins += 1
-        else:
-            self.if_id['ins'] = None
-            self.if_id['pc'] = self.pc    
+class Processor: # The processor!
+    
+    def __init__(self) -> None: # Default values initialisation
         
-    def id_stage(self):
-        if not self.if_id['ins']:
-            self.id_ex['ins'] = None
-            return
-        ins = self.if_id['ins']
-        self.id_ex['ins'] = ins
-        self.id_ex['pc'] = self.if_id['pc']
-        parts = ins.replace(',','').split()
-        op = parts[0]
-        self.id_ex['control'] = {
-            'regwrite': 0,
-            'memread': 0,
-            'memwrite': 0,
-            'branch': 0,
-            'jump': 0,
-            'alusrc': 0,
-            'regdst': 0,
-            'aluop': 'add'
-        }
-        if op == 'add':
-            self.id_ex['rd'] = int(parts[1][1:])
-            self.id_ex['rs'] = int(parts[2][1:])
-            self.id_ex['rt'] = int(parts[3][1:])
-            self.id_ex['control'].update({
-                'regwrite': 1,
-                'regdst': 1,
-                'aluop': 'add'
-            })
-        elif op == 'addi':
-            self.id_ex['rt'] = int(parts[1][1:])
-            self.id_ex['rs'] = int(parts[2][1:])
-            self.id_ex['imm'] = int(parts[3])
-            self.id_ex['control'].update({
-                'regwrite': 1,
-                'alusrc': 1,
-                'aluop': 'add'
-            })
-        elif op == 'lw':
-            rt = parts[1][1:]
-            offset_rs = parts[2].split('(')
-            self.id_ex['rt'] = int(rt)
-            self.id_ex['imm'] = int(offset_rs[0])
-            self.id_ex['rs'] = int(offset_rs[1][1:-1])  
-            self.id_ex['control'].update({
-                'regwrite': 1,
-                'memread': 1,
-                'alusrc': 1,
-                'aluop': 'add'
-            })
-            self.mem_latency = random.choice([2, 3]) 
-        elif op == 'sw':
-            rt = parts[1][1:]
-            offset_rs = parts[2].split('(')
-            self.id_ex['rt'] = int(rt)
-            self.id_ex['imm'] = int(offset_rs[0])
-            self.id_ex['rs'] = int(offset_rs[1][1:-1])
-            self.id_ex['control'].update({
-                'memwrite': 1,
-                'alusrc': 1,
-                'aluop': 'add'
-            })
-            self.mem_latency = random.choice([2, 3])
-        elif op == 'beq':
-            self.id_ex['rs'] = int(parts[1][1:])
-            self.id_ex['rt'] = int(parts[2][1:])
-            target = parts[3]
-            
-            # Handle both immediate offsets and labels
-            if target.isdigit() or (target[0] == '-' and target[1:].isdigit()):
-                self.id_ex['imm'] = int(target)
-            else:
-                # Search for the label in instruction memory
-                for addr, instruction in self.ins_mem.items():
-                    if instruction.startswith(target + ':'):
-                        # Calculate offset from current PC (pc+4 is already in pipeline)
-                        offset = (addr - (self.id_ex['pc'] + 4)) >> 2
-                        self.id_ex['imm'] = offset
-                        break
-                else:
-                    raise ValueError(f"Unknown branch target: {target}")
-            
-            self.id_ex['control'].update({
-                'branch': 1,
-                'aluop': 'sub'  
-            })
+        self.regs : list[int] = [0] * 32 # 32 basic registers
+        self.ins_mem : list[str] = {} # Instruction memory
+        self.data_mem : list[str] = {} # Data memory
+        self.pc : int = 0 # Program counter    
+        self.cycles : int = 0 # Total clock cycles
+        self.branch_taken : bool = False # Whether a branch is taken or not
+        self.stall_next_cycle : bool = False # Whether to stall next cycle
+        
+        
+        self.if_id : dict[int, str] = {} # The if-id pipelined register
+        self.id_ex : dict[int, str] = {} # The id-ex pipelined register
+        self.ex_mem : dict[int, str] = {} # The ex-mem pipelined register
+        self.mem_wb : dict[int, str] = {}  # The mem-wb pipelined register
+        
+        self.stall_cycles : int = 0 # Number of stall cycles
+        self.instructions_executed : int = 0 # Number of instructions executed
+        self.load_stalls : int = 0 # Number of load stalls
+        self.branch_count : int = 0 # Number of branch statements executed
+        self.mem_delay_cycles : int = 0 # Number of memory delay cycles
 
-        elif op == 'j':
-            
-            target = parts[1]
-            if target.isdigit():
-                self.id_ex['imm'] = int(target)
-            else:
-               
-                for addr, instruction in self.ins_mem.items():
-                    if instruction.startswith(target + ':'):
-                        self.id_ex['imm'] = addr >> 2 
-                        break
-                else:
-                    raise ValueError(f"Unknown jump target: {target}")
-            self.id_ex['control']['jump'] = 1
+    def load_program(self) -> None: # Function to load the MIPS program from a file 
+
+        with open('program.asm', 'r') as file: # Open the file in read mode
+            program : list[str] = [line.strip() for line in file if line!=""] # Taking only the non empty lines
+        
+        labels : dict[str, int] = {} # Dictionary to store branch labels and their addresses
+        current_addr : int = 0 # Current address in the instruction memory
+
+        for line in program: # Iterating through the lines of the program
+
+            if ':' in line: # Branch/jump address handling
+                label, instr = line.split(':', 1) 
+                labels[label.strip()] = current_addr # Stores the branch addresses
+                line = instr.strip()
+
+            if line:
+                current_addr += 4 # Incrementing the address by 4 bytes for each instruction
+        
+        current_addr = 0 # Resetting the address to 0 for loading instructions
+
+        for line in program:
+            if ':' in line: # If the line has a label, we need to split it and extract the instruction
+                line = line.split(':', 1)[1].strip()
+
+            if not line:
+                continue
+
+            parts : list[str] = line.split()
+
+            if parts[0] == 'beq' and parts[-1] in labels: # If its a branch and the last element is in the labels collected earlier
+                target = labels[parts[-1]] # The adress to jump to
+                offset = (target - (current_addr + 4)) // 4 # Calculates the offset
+                parts[-1] = str(offset) # Replaces the label with the offset
+
+            self.ins_mem[current_addr] = ' '.join(parts) # Storing the instructions in the instruction memory
+            current_addr += 4 # Incrementing the address by 4 bytes for each instruction
+
+    def if_stage(self, stall=False): # Instruction Fetch Stage (First of five stages)
+
+        if not stall and self.pc in self.ins_mem: # If not stalled and the PC is valid
+            self.if_id['ins'] = self.ins_mem[self.pc] # Fetch the instruction
+            self.pc += 4 # Increment the PC by 4
+        elif stall: # If stalled
+            self.if_id.clear()
+            pass # Do nothing
+        else: # If invalid
+            self.if_id['ins'] = None # Clear the IF/ID register
+
+    def id_stage(self, stall=False): # Instruction Decode Stage (Second of five stages)
+        if stall: # If stalled
+            self.id_ex.clear() # Clear the ID/EX register
+            return
+        
+        if 'ins' not in self.if_id or not self.if_id['ins']: # If invalid instruction
+            self.id_ex.clear() # Clear the ID/EX register
+            return
+        
+        ins = self.if_id['ins'] 
+        parts = ins.split()
+        op = parts[0] # The operation
+        if op == 'beq': # If branch instruction
+            self.stall_next_cycle = True # Stall for one cycle
+        self.id_ex['ins'] = ins 
+
+        # Decoding the instruction (We only support these instructions)
+        if op in ('addi', 'subi'): 
+            self.id_ex['rd'] = int(parts[1][1:-1])
+            self.id_ex['rs'] = int(parts[2][1:-1])
+            self.id_ex['imm'] = int(parts[3])
+        elif op in ('add', 'sub'):
+            self.id_ex['rd'] = int(parts[1][1:-1])
+            self.id_ex['rs'] = int(parts[2][1:-1])
+            self.id_ex['rt'] = int(parts[3][1:])
+        elif op in ('lw', 'sw'):
+            self.id_ex['rt'] = int(parts[1][1:-1])
+            offset_reg = parts[2].split('(')
+            self.id_ex['offset'] = int(offset_reg[0])
+            self.id_ex['rs'] = int(offset_reg[1].split(')')[0][1:])
+        elif op == 'beq':
+            self.id_ex['rs'] = int(parts[1][1:-1])
+            self.id_ex['rt'] = int(parts[2][1:-1])
+            self.id_ex['offset'] = int(parts[3])
+        elif op != 'halt':
+            raise ValueError(f'INVALID INSTRUCTION/UNSUPPORTED: {ins}')
+
+    def ex_stage(self) -> None: # Execute Stage (Third of five stages)
+        
+        if 'ins' not in self.id_ex or not self.id_ex['ins']:
+            return
+        
+        ins : str = self.id_ex['ins']
+        parts : list[str] = ins.split()
+        op : str = parts[0]
+        
+        self.ex_mem['ins'] = ins
+
+        if op == 'addi':
+            self.ex_mem['result'] = self.regs[self.id_ex['rs']] + self.id_ex['imm']
+            self.ex_mem['rd'] = self.id_ex['rd']
 
         elif op == 'subi':
-            self.id_ex['rt'] = int(parts[1][1:])
-            self.id_ex['rs'] = int(parts[2][1:])
-            self.id_ex['imm'] = int(parts[3])
-            self.id_ex['control'].update({
-                'regwrite': 1,
-                'alusrc': 1,
-                'aluop': 'sub'
-            })
-        elif op == 'halt':
-            pass
+            self.ex_mem['result'] = self.regs[self.id_ex['rs']] - self.id_ex['imm']
+            self.ex_mem['rd'] = self.id_ex['rd']
 
-    def ex_stage(self):
-        if self.id_ex['ins'] is None:
-            self.ex_mem['ins'] = None
-            return
-        
-        ins = self.id_ex['ins']
-        self.ex_mem['ins'] = ins
-        self.ex_mem['pc'] = self.id_ex['pc']
-        self.ex_mem['control'] = self.id_ex['control']
+        elif op == 'add':
+            self.ex_mem['result'] = self.regs[self.id_ex['rs']] + self.regs[self.id_ex['rt']]
+            self.ex_mem['rd'] = self.id_ex['rd']
 
-        rs_val = self.regs[self.id_ex['rs']] if self.id_ex['rs'] is not None else 0
-        rt_val = self.regs[self.id_ex['rt']] if self.id_ex['rt'] is not None else 0
+        elif op == 'sub':
+            self.ex_mem['result'] = self.regs[self.id_ex['rs']] + self.regs[self.id_ex['rt']]
+            self.ex_mem['rd'] = self.id_ex['rd']
 
-        if self.id_ex['control']['alusrc']:
-            op2 = self.id_ex['imm']
-        else:
-            op2 = rt_val
+        elif op in ('lw', 'sw'):
+            self.ex_mem['addr'] = self.regs[self.id_ex['rs']] + self.id_ex['offset']
+            self.ex_mem['rt'] = self.id_ex['rt']
 
-        if self.id_ex['control']['aluop'] == 'add':
-            self.ex_mem['alu_res'] = rs_val + op2
-        elif self.id_ex['control']['aluop'] == 'sub':
-            self.ex_mem['alu_res'] = rs_val - op2
+            if op == 'sw':
+                self.ex_mem['value'] = self.regs[self.id_ex['rt']]
 
-        self.ex_mem['rt_data'] = rt_val
-        self.ex_mem['rd'] = self.id_ex['rd'] if self.id_ex['rd'] is not None else self.id_ex['rt']
+            self.ex_mem['mem_cycles_left'] = random.choice([2, 3]) # Randomly chooses 2 or 3 cycles for memory access delay
 
-        
-        if self.id_ex['control']['jump']:
-            jump_target = (self.id_ex['pc'] & 0xF0000000) | (self.id_ex['imm'] << 2)
-            self.pc = jump_target
-            self.branch_taken = True
-            pc_next = self.id_ex['pc'] + 4
-            if pc_next in self.ins_mem and not self.ins_mem[pc_next].startswith('nop'):
-                self.delay_slot_used += 1
-            else:
-                self.delay_slot_wasted += 1
-                
+        elif op == 'beq':
 
-        elif self.id_ex['control']['branch']:
-            
-            if rs_val == rt_val:  
-                self.pc = self.id_ex['pc'] + 4 + (self.id_ex['imm'] << 2)
+            if self.regs[self.id_ex['rs']] - self.regs[self.id_ex['rt']] == 0:
+                self.pc = self.pc - 4 + (self.id_ex['offset'] * 4)
                 self.branch_taken = True
-                pc_next = self.id_ex['pc'] + 4
-                if pc_next in self.ins_mem and not self.ins_mem[pc_next].startswith('nop'):
-                    self.delay_slot_used += 1
-                else:
-                    self.delay_slot_wasted += 1
+                self.branch_count += 1
 
-        if self.id_ex['control']['memread'] and ((self.id_ex['rs'] is not None and self.id_ex['rs'] == self.ex_mem['rd']) or 
-        (self.id_ex['rt'] is not None and self.id_ex['rt'] == self.ex_mem['rd'])):
-            self.stall = True
-            self.stall_count += 1
-            self.load_stalls += 1
+        self.ex_mem.setdefault('mem_cycles_left', 0)
 
-    def mem_stage(self):
-        if not self.ex_mem['ins']:
-            self.mem_wb['ins'] = None
+    def mem_stage(self): # Memory Stage (Fourth of five stages)
+        if 'ins' not in self.ex_mem or not self.ex_mem['ins']:
+            self.mem_wb.clear()
             return
         
-        if self.current_stage_cycles > 0:
-            self.current_stage_cycles -= 1
-            self.mem_delay_cycles += 1
-            self.stall = True
-            self.stall_count += 1
-            return
-        
-        self.stall = False
         ins = self.ex_mem['ins']
-        self.mem_wb['ins'] = ins
-        self.mem_wb['alu_res'] = self.ex_mem['alu_res']
-        self.mem_wb['control'] = self.ex_mem['control']
-        self.mem_wb['rd'] = self.ex_mem['rd']
-
-        if self.ex_mem['control']['memread']:
-            addr = self.ex_mem['alu_res']
-            self.mem_wb['mem_data'] = self.data_mem.get(addr, 0)  
-            self.current_stage_cycles = self.mem_latency - 1
-        elif self.ex_mem['control']['memwrite']:
-            addr = self.ex_mem['alu_res']
-            self.data_mem[addr] = self.ex_mem['rt_data']
-            self.current_stage_cycles = self.mem_latency - 1
-
-    def wb_stage(self):
-        if not self.mem_wb['ins']:
+        parts = ins.split()
+        op = parts[0]
+        if self.ex_mem['mem_cycles_left'] > 0: # If there are any memory cycles leftover
+            self.ex_mem['mem_cycles_left'] -= 1 # Continue the memory access
+            self.mem_delay_cycles += 1 # This leads to a memory delay cycle
             return
-        if self.mem_wb['control']['regwrite']:
-            if self.mem_wb['control']['memread']:
-                self.regs[self.mem_wb['rd']] = self.mem_wb['mem_data']  
-            else: 
-                self.regs[self.mem_wb['rd']] = self.mem_wb['alu_res']  
-
-    def print_pipeline_state(self):
-        """Print the current state of the pipeline"""
-        print(f"Cycle {self.cycles}:")
-        print(f"  IF: {self.if_id['ins'] or '---'}")
-        print(f"  ID: {self.id_ex['ins'] or '---'}")
-        print(f"  EX: {self.ex_mem['ins'] or '---'}")
-        print(f"  MEM: {self.mem_wb['ins'] or '---'}")
-        print(f"  WB: {self.mem_wb['ins'] if self.mem_wb['ins'] and 'halt' not in self.mem_wb['ins'] else '---'}")
-        print("---")
-
-    def print_statistics(self):
-        """Print simulation statistics"""
-        print("\nSimulation Statistics:")
-        print("=====================")
-        print(f"Total Clock Cycles: {self.cycles}")
-        print(f"Total Instructions Executed: {self.tot_ins}")
-        print(f"Total Stalls: {self.stall_count}")
-        print(f"  Stalls due to Loads: {self.load_stalls}")
-        print(f"  Stalls due to Memory Latency: {self.mem_delay_cycles}")
-        print("Branch Delay Slot Effectiveness:")
-        print(f"  Useful Delay Slots: {self.delay_slot_used}")
-        print(f"  Wasted Delay Slots: {self.delay_slot_wasted}")
-        if (self.delay_slot_used + self.delay_slot_wasted) > 0:
-            effectiveness = (self.delay_slot_used / 
-                           (self.delay_slot_used + self.delay_slot_wasted)) * 100
-            print(f"  Effectiveness: {effectiveness:.2f}%")
-        print("\nFinal Register Values:")
-        for i in range(32):
-            if self.regs[i] != 0:
-                print(f"  ${i}: {self.regs[i]}")
-        print("\nFinal Data Memory Contents:")
-        for addr in sorted(self.data_mem.keys()):
-            print(f"  MEM[{addr}]: {self.data_mem[addr]}")
-
-    def load_sample_program(self):
-        program = [
-            'addi $4, $0, 5',    
-            'addi $5, $0, 10',   
-            'loop: lw $6, 0($1)',
-            'add $7, $6, $2',    
-            'sw $7, 0($3)',      
-            'addi $1, $1, 4',     
-            'addi $3, $3, 4',     
-            'subi $4, $4, 1',     
-            'beq $4, $0, loop',   
-            'addi $8, $0, 100',  
-            'lw $9, 0($2)',      
-            'sw $9, 4($2)',      
-            'add $10, $9, $5',    
-            'j end',             
-            'addi $11, $0, 200',  
-            'end: halt'          
-        ]
         
-        for i, inst in enumerate(program):
-            self.ins_mem[i*4] = inst
-
-    def run(self):
-        print("Starting MIPS Processor Simulation")
-        print("=================================")
+        if op in ['addi', 'subi', 'add', 'sub']:
+            self.mem_wb['result'] = self.ex_mem['result']
+            self.mem_wb['rd'] = self.ex_mem['rd']
+        elif op == 'lw':
+            self.mem_wb['result'] = self.data_mem.get(self.ex_mem['addr'], 0) # Getting the data from data memory
+            self.mem_wb['rd'] = self.ex_mem['rt']
+        elif op == 'sw':
+            self.data_mem[self.ex_mem['addr']] = self.ex_mem['value'] # Writing the data onto data memory
         
-        while True:
-            self.cycles += 1
+        self.mem_wb['ins'] = ins
+        self.ex_mem.clear()
+
+    def wb_stage(self): # Write Back Stage (Fifth of five stages)
+        if 'ins' in self.mem_wb and self.mem_wb['ins']:
+            ins = self.mem_wb['ins']
+            parts = ins.split()
+            op = parts[0]
+            if op in ['addi', 'subi', 'add', 'lw', 'sub'] and self.mem_wb['rd'] != 0:
+                self.regs[self.mem_wb['rd']] = self.mem_wb['result'] # Store the result in the destination register
+            self.instructions_executed += 1
+
+    def print_pipeline_state(self) -> None:
+        
+        print(f'Clock Cycle {self.cycles}:')
+        print(f'IF/ID: {self.if_id.get('ins', 'NOP')}')
+        print(f'ID/EX: {self.id_ex.get('ins', 'NOP')}')
+        print(f'EX/MEM: {self.ex_mem.get('ins', 'NOP')} (Mem Cycles Left: {self.ex_mem.get('mem_cycles_left', 0)})')
+        print(f'MEM/WB: {self.mem_wb.get('ins', 'NOP')}')
+        print(f'PC: {self.pc}')
+        print('Registers:', [f'${i}:{self.regs[i]}' for i in range(8)])
+        print('------------------------')
+
+    def print_statistics(self) -> None:
+        
+        print('\nSimulation Statistics:')
+        print(f'Total clock cycles: {self.cycles}')
+        print(f'No. of instructions executed: {self.instructions_executed}')
+        print(f'Stall cycles: {self.stall_cycles}')
+        print(f'Load-stalls: {self.load_stalls}')
+        print(f'Branch statements executed: {self.branch_count}')
+        print(f'Memory delay cycles: {self.mem_delay_cycles}')
+
+
+    def run(self) -> None:
+        
+        print('SIMULATION\n==========')
+        
+        while True: # Keep running until program ends (halt)
+
+            self.cycles += 1 
+            memory_stall : bool = 'mem_cycles_left' in self.ex_mem and self.ex_mem['mem_cycles_left'] > 0
+            branch_stall : bool = self.stall_next_cycle
+            
+            if memory_stall or branch_stall:
+                self.stall_cycles += 1
+
+                if memory_stall and 'ins' in self.ex_mem and self.ex_mem['ins'].startswith('lw'):
+                    self.load_stalls += 1
+            
             self.wb_stage()
             self.mem_stage()
-            self.ex_stage()
-            self.id_stage()
-            self.if_stage()
+
+            if not memory_stall:
+                self.ex_stage()
+                self.id_stage()
+                self.if_stage(branch_stall)
+ 
+            if branch_stall:
+                self.stall_next_cycle = False
             
             self.print_pipeline_state()
             
-            if self.mem_wb['ins'] and 'halt' in self.mem_wb['ins']:
+            if self.mem_wb.get('ins') == 'halt': # if it's halt then end the program
                 break
-            
-            if self.branch_taken:
-                self.branch_taken = False
-            
+        
         self.print_statistics()
 
+def main() -> None:
 
-core = Processor()
-core.load_sample_program()
-core.run()
+    core = Processor()
+    core.regs[1] = 0
+    core.regs[2] = 4
+    core.regs[3] = 7
+    core.load_program()
+    core.run()
+
+if __name__ == '__main__':
+    main()
