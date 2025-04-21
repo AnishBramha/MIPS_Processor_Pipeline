@@ -196,7 +196,7 @@ class Processor: # The processor!
         print(f'EX/MEM: {self.ex_mem.get('ins', 'NOP')} (Mem Cycles Left: {self.ex_mem.get('mem_cycles_left', 0)})')
         print(f'MEM/WB: {self.mem_wb.get('ins', 'NOP')}')
         print(f'PC: {self.pc}')
-        print('Registers:', [f'${i}:{self.regs[i]}' for i in range(8)])
+        print('Registers:', [f'${i}:{self.regs[i]}' for i in range(10)])
         print('------------------------')
 
     def print_statistics(self) -> None:
@@ -247,9 +247,6 @@ class Processor: # The processor!
 def main() -> None:
 
     core = Processor()
-    core.regs[1] = 0
-    core.regs[2] = 4
-    core.regs[3] = 7
     core.load_program()
     core.run()
 
